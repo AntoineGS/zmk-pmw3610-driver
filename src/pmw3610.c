@@ -16,6 +16,7 @@
 #include <zephyr/device.h>
 #include <zephyr/sys/dlist.h>
 #include <drivers/behavior.h>
+#include <math.h>
 #include <zmk/keymap.h>
 #include <zmk/behavior.h>
 #include <zmk/keys.h>
@@ -597,6 +598,69 @@ static enum pixart_input_mode get_input_mode_for_current_layer(const struct devi
     return MOVE;
 }
 
+static inline void calculate_scroll_acceleration(int16_t x, int16_t y, struct pixart_data *data,
+                                                int32_t *accel_x, int32_t *accel_y) {
+    *accel_x = x;
+    *accel_y = y;
+    
+    #ifdef CONFIG_PMW3610_SCROLL_ACCELERATION
+        int32_t movement = abs(x) + abs(y);
+        int64_t current_time = k_uptime_get();
+        int64_t delta_time = data->last_scroll_time > 0 ? 
+                            current_time - data->last_scroll_time : 0;
+        
+        if (delta_time > 0 && delta_time < 100) {
+            float speed = (float)movement / delta_time;
+            float base_sensitivity = (float)CONFIG_PMW3610_SCROLL_ACCELERATION_SENSITIVITY;
+            float acceleration = 1.0f + (base_sensitivity - 1.0f) * (1.0f / (1.0f + expf(-0.2f * (speed - 10.0f))));
+            
+            *accel_x = (int32_t)(x * acceleration);
+            *accel_y = (int32_t)(y * acceleration);
+            
+            if (abs(x) <= 1) *accel_x = x;
+            if (abs(y) <= 1) *accel_y = y;
+        }
+        
+        data->last_scroll_time = current_time;
+    #endif
+}
+
+static inline void process_scroll_events(const struct device *dev, struct pixart_data *data,
+                                        int32_t delta, bool is_horizontal) {
+    if (abs(delta) > CONFIG_PMW3610_SCROLL_TICK) {
+        int event_count = abs(delta) / CONFIG_PMW3610_SCROLL_TICK;
+        const int MAX_EVENTS = 20;
+        int32_t *target_delta = is_horizontal ? &data->scroll_delta_x : &data->scroll_delta_y;
+        
+        if (event_count > MAX_EVENTS) {
+            event_count = MAX_EVENTS;
+            *target_delta = (delta > 0) ? 
+                delta - (MAX_EVENTS * CONFIG_PMW3610_SCROLL_TICK) :
+                delta + (MAX_EVENTS * CONFIG_PMW3610_SCROLL_TICK);
+            data->last_remainder_time = k_uptime_get();
+        } else {
+            *target_delta = delta % CONFIG_PMW3610_SCROLL_TICK;
+        }
+        
+        for (int i = 0; i < event_count; i++) {
+            input_report_rel(dev,
+                            is_horizontal ? INPUT_REL_HWHEEL : INPUT_REL_WHEEL,
+                            delta > 0 ? 
+                                (is_horizontal ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_Y_NEGATIVE) :
+                                (is_horizontal ? PMW3610_SCROLL_X_POSITIVE : PMW3610_SCROLL_Y_POSITIVE),
+                            (i == event_count - 1),
+                            K_MSEC(10));
+        }
+        
+        if (is_horizontal) {
+            data->scroll_delta_y = 0;
+        } else {
+            data->scroll_delta_x = 0;
+        }
+    }
+}
+
+
 static int pmw3610_report_data(const struct device *dev) {
     struct pixart_data *data = dev->data;
     uint8_t buf[PMW3610_BURST_SIZE];
@@ -684,6 +748,16 @@ static int pmw3610_report_data(const struct device *dev) {
         y = -y;
     }
 
+    int64_t current_time = k_uptime_get();
+    if (data->last_remainder_time > 0) {
+        int64_t elapsed = current_time - data->last_remainder_time;
+        if (elapsed > 100) {
+            data->scroll_delta_x = 0;
+            data->scroll_delta_y = 0;
+            data->last_remainder_time = 0;
+        } 
+    }
+
 #ifdef CONFIG_PMW3610_SMART_ALGORITHM
     int16_t shutter =
         ((int16_t)(buf[PMW3610_SHUTTER_H_POS] & 0x01) << 8) + buf[PMW3610_SHUTTER_L_POS];
@@ -730,21 +804,14 @@ static int pmw3610_report_data(const struct device *dev) {
             input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
             input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
         } else if (input_mode == SCROLL) {
-            data->scroll_delta_x += x;
-            data->scroll_delta_y += y;
-            if (abs(data->scroll_delta_y) > CONFIG_PMW3610_SCROLL_TICK) {
-                input_report_rel(dev, INPUT_REL_WHEEL,
-                                 data->scroll_delta_y > 0 ? PMW3610_SCROLL_Y_NEGATIVE : PMW3610_SCROLL_Y_POSITIVE,
-                                 true, K_FOREVER);
-                data->scroll_delta_x = 0;
-                data->scroll_delta_y = 0;
-            } else if (abs(data->scroll_delta_x) > CONFIG_PMW3610_SCROLL_TICK) {
-                input_report_rel(dev, INPUT_REL_HWHEEL,
-                                 data->scroll_delta_x > 0 ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_X_POSITIVE,
-                                 true, K_FOREVER);
-                data->scroll_delta_x = 0;
-                data->scroll_delta_y = 0;
-            }
+            int32_t accel_x, accel_y;
+            calculate_scroll_acceleration(x, y, data, &accel_x, &accel_y);
+            
+            data->scroll_delta_x += accel_x;
+            data->scroll_delta_y += accel_y;
+            
+            process_scroll_events(dev, data, data->scroll_delta_y, false);
+            process_scroll_events(dev, data, data->scroll_delta_x, true);
         } else if (input_mode == BALL_ACTION) {
             data->ball_action_delta_x += x;
             data->ball_action_delta_y += y;
