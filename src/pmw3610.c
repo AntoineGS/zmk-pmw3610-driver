@@ -15,6 +15,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/device.h>
 #include <zephyr/sys/dlist.h>
+#include <zephyr/pm/device.h>
 #include <drivers/behavior.h>
 #include <math.h>
 #include <zmk/keymap.h>
@@ -906,6 +907,38 @@ static int pmw3610_init_irq(const struct device *dev) {
     return err;
 }
 
+#ifdef CONFIG_PM_DEVICE
+static int pmw3610_pm_action(const struct device *dev, enum pm_device_action action) {
+    const struct pixart_config *config = dev->config;
+    int err = 0;
+
+    switch (action) {
+    case PM_DEVICE_ACTION_SUSPEND:
+        LOG_INF("Suspending PMW3610 for deep sleep");
+        /* Disable IRQ to prevent wake events from trackball */
+        err = gpio_pin_interrupt_configure_dt(&config->irq_gpio, GPIO_INT_DISABLE);
+        if (err) {
+            LOG_ERR("Cannot disable IRQ GPIO: %d", err);
+        }
+        break;
+
+    case PM_DEVICE_ACTION_RESUME:
+        LOG_INF("Resuming PMW3610 from deep sleep");
+        /* Re-enable IRQ */
+        err = gpio_pin_interrupt_configure_dt(&config->irq_gpio, GPIO_INT_EDGE_FALLING);
+        if (err) {
+            LOG_ERR("Cannot re-enable IRQ GPIO: %d", err);
+        }
+        break;
+
+    default:
+        return -ENOTSUP;
+    }
+
+    return err;
+}
+#endif /* CONFIG_PM_DEVICE */
+
 static int pmw3610_init(const struct device *dev) {
     LOG_INF("Start initializing...");
 
@@ -1005,7 +1038,9 @@ DT_INST_FOREACH_CHILD(0, BALL_ACTIONS_INST)
         .ball_actions_len = BALL_ACTIONS_LEN,                                                      \
     };                                                                                             \
                                                                                                    \
-    DEVICE_DT_INST_DEFINE(n, pmw3610_init, NULL, &data##n, &config##n, POST_KERNEL,                \
+    PM_DEVICE_DT_INST_DEFINE(n, pmw3610_pm_action);                                                \
+                                                                                                   \
+    DEVICE_DT_INST_DEFINE(n, pmw3610_init, PM_DEVICE_DT_INST_GET(n), &data##n, &config##n, POST_KERNEL, \
                           CONFIG_SENSOR_INIT_PRIORITY, NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(PMW3610_DEFINE)
