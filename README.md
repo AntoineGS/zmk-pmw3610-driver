@@ -113,3 +113,27 @@ CONFIG_INPUT=y
 CONFIG_ZMK_MOUSE=y
 CONFIG_PMW3610=y
 ```
+
+## Power Management (Deep Sleep)
+
+The driver supports deep sleep mode to maximize battery life. When enabled, the PMW3610 sensor will automatically enter shutdown mode when the keyboard enters idle/deep sleep state, and wake up when the keyboard resumes.
+
+To enable power management, add the following to your `board.config`:
+
+```conf
+# Enable Zephyr power management
+CONFIG_PM_DEVICE=y
+
+# Enable PMW3610 power management (enabled by default when PM_DEVICE is enabled)
+CONFIG_PMW3610_PM=y
+```
+
+The sensor will:
+- Enter **shutdown mode** (register 0x3B with value 0xE7) when the system suspends
+- Wake up via power-up reset (register 0x3A with value 0x96) when the system resumes
+- Re-initialize automatically after wake-up
+- Integrate seamlessly with ZMK's [low-power states](https://zmk.dev/docs/features/low-power-states)
+
+**Power Savings**: In shutdown mode, the sensor consumes minimal power (microamps range) compared to REST modes.
+
+**Note**: Do not enable both `CONFIG_PMW3610_FORCE_AWAKE` and `CONFIG_PMW3610_PM` at the same time, as they conflict with each other.

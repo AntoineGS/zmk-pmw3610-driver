@@ -75,6 +75,16 @@ config PMW3610_FORCE_AWAKE
     help
       This setting forces the sensor to always be in the RUN state.
 
+config PMW3610_PM
+    bool "Enable power management support for PMW3610"
+    depends on PM_DEVICE
+    default y if PM_DEVICE
+    help
+      Enable power management support for the PMW3610 sensor.
+      When enabled, the sensor will enter deep sleep (shutdown mode)
+      when the system suspends and wake up on resume.
+      This integrates with ZMK's low-power states for optimal battery life.
+
 config PMW3610_RUN_DOWNSHIFT_TIME_MS
     int "PMW3610's default RUN mode downshift time"
     default 128
