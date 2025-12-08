@@ -38,6 +38,10 @@ struct pixart_data {
     int64_t last_scroll_time;
 #endif
 
+#ifdef CONFIG_PMW3610_ACCELERATION_ALGORITHM_SIGMOID
+    int64_t last_mouse_time;
+#endif
+
     // motion interrupt isr
     struct gpio_callback irq_gpio_cb;
     // the work structure holding the trigger job

@@ -603,26 +603,80 @@ static inline void calculate_scroll_acceleration(int16_t x, int16_t y, struct pi
                                                 int32_t *accel_x, int32_t *accel_y) {
     *accel_x = x;
     *accel_y = y;
-    
+
     #ifdef CONFIG_PMW3610_SCROLL_ACCELERATION
         int32_t movement = abs(x) + abs(y);
         int64_t current_time = k_uptime_get();
-        int64_t delta_time = data->last_scroll_time > 0 ? 
+        int64_t delta_time = data->last_scroll_time > 0 ?
                             current_time - data->last_scroll_time : 0;
-        
+
         if (delta_time > 0 && delta_time < 100) {
             float speed = (float)movement / delta_time;
             float base_sensitivity = (float)CONFIG_PMW3610_SCROLL_ACCELERATION_SENSITIVITY;
             float acceleration = 1.0f + (base_sensitivity - 1.0f) * (1.0f / (1.0f + expf(-0.2f * (speed - 10.0f))));
-            
+
             *accel_x = (int32_t)(x * acceleration);
             *accel_y = (int32_t)(y * acceleration);
-            
+
             if (abs(x) <= 1) *accel_x = x;
             if (abs(y) <= 1) *accel_y = y;
         }
-        
+
         data->last_scroll_time = current_time;
+    #endif
+}
+
+static inline void calculate_mouse_acceleration(int16_t x, int16_t y, struct pixart_data *data,
+                                                int32_t *accel_x, int32_t *accel_y) {
+    *accel_x = x;
+    *accel_y = y;
+
+    #ifdef CONFIG_PMW3610_ACCELERATION
+        // Don't accelerate very small movements (preserve precision)
+        if (abs(x) <= 1 && abs(y) <= 1) {
+            return;
+        }
+
+        #ifdef CONFIG_PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
+            // QMK-style quadratic acceleration: output = x * (1 + |x|/divider)
+            // Sensitivity maps to divider: higher sensitivity = lower divider = more acceleration
+            // divider = 22 - (sensitivity * 2)
+            // Sensitivity 1: divider=20, Sensitivity 7: divider=8 (QMK tuned), Sensitivity 10: divider=2
+            const int32_t divider = 22 - (CONFIG_PMW3610_ACCELERATION_SENSITIVITY * 2);
+
+            *accel_x = (x > 0) ? (x * x / divider + x) : (-x * x / divider + x);
+            *accel_y = (y > 0) ? (y * y / divider + y) : (-y * y / divider + y);
+
+            // Preserve individual axis precision for small movements
+            if (abs(x) <= 1) *accel_x = x;
+            if (abs(y) <= 1) *accel_y = y;
+
+        #elif CONFIG_PMW3610_ACCELERATION_ALGORITHM_SIGMOID
+            // Speed-based sigmoid acceleration
+            int32_t movement = abs(x) + abs(y);
+            int64_t current_time = k_uptime_get();
+            int64_t delta_time = data->last_mouse_time > 0 ?
+                                current_time - data->last_mouse_time : 0;
+
+            if (delta_time > 0 && delta_time < 100) {
+                float speed = (float)movement / delta_time;
+                float base_sensitivity = (float)CONFIG_PMW3610_ACCELERATION_SENSITIVITY;
+                float acceleration = 1.0f + (base_sensitivity - 1.0f) *
+                                    (1.0f / (1.0f + expf(-0.2f * (speed - 10.0f))));
+
+                *accel_x = (int32_t)(x * acceleration);
+                *accel_y = (int32_t)(y * acceleration);
+
+                // Preserve individual axis precision for small movements
+                if (abs(x) <= 1) *accel_x = x;
+                if (abs(y) <= 1) *accel_y = y;
+
+                data->last_mouse_time = current_time;
+            } else {
+                // Outside timing window - reset to start fresh acceleration chain
+                data->last_mouse_time = current_time;
+            }
+        #endif
     #endif
 }
 
@@ -793,6 +847,9 @@ static int pmw3610_report_data(const struct device *dev) {
 
     if (x != 0 || y != 0) {
         if (input_mode == MOVE || input_mode == SNIPE) {
+            int32_t accel_x, accel_y;
+            calculate_mouse_acceleration(x, y, data, &accel_x, &accel_y);
+
 #if AUTOMOUSE_LAYER > 0
             // トラックボールの動きの大きさを計算
             int16_t movement_size = abs(x) + abs(y);
@@ -802,8 +859,8 @@ static int pmw3610_report_data(const struct device *dev) {
                 activate_automouse_layer();
             }
 #endif
-            input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
-            input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
+            input_report_rel(dev, INPUT_REL_X, accel_x, false, K_FOREVER);
+            input_report_rel(dev, INPUT_REL_Y, accel_y, true, K_FOREVER);
         } else if (input_mode == SCROLL) {
             int32_t accel_x, accel_y;
             calculate_scroll_acceleration(x, y, data, &accel_x, &accel_y);

@@ -197,6 +197,43 @@ config PMW3610_SCROLL_ACCELERATION_SENSITIVITY
     help
       Scrolling acceleration sensitivity. Higher values make scrolling more responsive with stronger acceleration.
 
+config PMW3610_ACCELERATION
+    bool "Enable acceleration"
+    default n
+    help
+      Enable acceleration based on movement speed.
+
+config PMW3610_ACCELERATION_SENSITIVITY
+    int "Acceleration sensitivity (1-10)"
+    default 3
+    range 1 10
+    depends on PMW3610_ACCELERATION
+    help
+      Acceleration sensitivity. Higher values make mouse movement more responsive with stronger acceleration.
+
+choice
+    prompt "Select acceleration algorithm"
+    default PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
+    depends on PMW3610_ACCELERATION
+
+config PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
+    bool "Quadratic (QMK-style)"
+    help
+      Distance-based quadratic acceleration. Formula: output = x * (1 + |x|/divider)
+      Simple and predictable - larger movements get proportionally more acceleration.
+      Matches QMK pointing device acceleration behavior.
+      Sensitivity maps to divider: higher sensitivity = more acceleration.
+
+config PMW3610_ACCELERATION_ALGORITHM_SIGMOID
+    bool "Sigmoid (speed-based)"
+    help
+      Speed-based sigmoid acceleration using movement speed over time.
+      Provides smooth S-curve acceleration with 100ms timing window.
+      More complex but smoother transition between slow and fast movements.
+      Sensitivity controls the steepness of the acceleration curve.
+
+endchoice
+
 module = PMW3610
 module-str = PMW3610
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
