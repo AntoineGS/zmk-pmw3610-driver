@@ -30,7 +30,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 
-
 //////// Sensor initialization steps definition //////////
 // init is done in non-blocking manner (i.e., async), a //
 // delayable work is defined for this purpose           //
@@ -600,30 +599,32 @@ static enum pixart_input_mode get_input_mode_for_current_layer(const struct devi
 }
 
 static inline void calculate_scroll_acceleration(int16_t x, int16_t y, struct pixart_data *data,
-                                                int32_t *accel_x, int32_t *accel_y) {
+                                                 int32_t *accel_x, int32_t *accel_y) {
     *accel_x = x;
     *accel_y = y;
 
-    #ifdef CONFIG_PMW3610_SCROLL_ACCELERATION
-        int32_t movement = abs(x) + abs(y);
-        int64_t current_time = k_uptime_get();
-        int64_t delta_time = data->last_scroll_time > 0 ?
-                            current_time - data->last_scroll_time : 0;
+#ifdef CONFIG_PMW3610_SCROLL_ACCELERATION
+    int32_t movement = abs(x) + abs(y);
+    int64_t current_time = k_uptime_get();
+    int64_t delta_time = data->last_scroll_time > 0 ? current_time - data->last_scroll_time : 0;
 
-        if (delta_time > 0 && delta_time < 100) {
-            float speed = (float)movement / delta_time;
-            float base_sensitivity = (float)CONFIG_PMW3610_SCROLL_ACCELERATION_SENSITIVITY;
-            float acceleration = 1.0f + (base_sensitivity - 1.0f) * (1.0f / (1.0f + expf(-0.2f * (speed - 10.0f))));
+    if (delta_time > 0 && delta_time < 100) {
+        float speed = (float)movement / delta_time;
+        float base_sensitivity = (float)CONFIG_PMW3610_SCROLL_ACCELERATION_SENSITIVITY;
+        float acceleration =
+            1.0f + (base_sensitivity - 1.0f) * (1.0f / (1.0f + expf(-0.2f * (speed - 10.0f))));
 
-            *accel_x = (int32_t)(x * acceleration);
-            *accel_y = (int32_t)(y * acceleration);
+        *accel_x = (int32_t)(x * acceleration);
+        *accel_y = (int32_t)(y * acceleration);
 
-            if (abs(x) <= 1) *accel_x = x;
-            if (abs(y) <= 1) *accel_y = y;
-        }
+        if (abs(x) <= 1)
+            *accel_x = x;
+        if (abs(y) <= 1)
+            *accel_y = y;
+    }
 
-        data->last_scroll_time = current_time;
-    #endif
+    data->last_scroll_time = current_time;
+#endif
 }
 
 static inline void calculate_mouse_acceleration(int16_t x, int16_t y, struct pixart_data *data,
@@ -631,82 +632,82 @@ static inline void calculate_mouse_acceleration(int16_t x, int16_t y, struct pix
     *accel_x = x;
     *accel_y = y;
 
-    #ifdef CONFIG_PMW3610_ACCELERATION
-        // Don't accelerate very small movements (preserve precision)
-        if (abs(x) <= 1 && abs(y) <= 1) {
-            return;
-        }
+#ifdef CONFIG_PMW3610_ACCELERATION
+    // Don't accelerate very small movements (preserve precision)
+    if (abs(x) <= 1 && abs(y) <= 1) {
+        return;
+    }
 
-        #ifdef CONFIG_PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
-            // QMK-style quadratic acceleration: output = x * (1 + |x|/divider)
-            // Sensitivity maps to divider: higher sensitivity = lower divider = more acceleration
-            // divider = 22 - (sensitivity * 2)
-            // Sensitivity 1: divider=20, Sensitivity 7: divider=8 (QMK tuned), Sensitivity 10: divider=2
-            const int32_t divider = 22 - (CONFIG_PMW3610_ACCELERATION_SENSITIVITY * 2);
+#ifdef CONFIG_PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
+    // QMK-style quadratic acceleration: output = x * (1 + |x|/divider)
+    // Sensitivity maps to divider: higher sensitivity = lower divider = more acceleration
+    // divider = 22 - (sensitivity * 2)
+    // Sensitivity 1: divider=20, Sensitivity 7: divider=8 (QMK tuned), Sensitivity 10: divider=2
+    const int32_t divider = 22 - (CONFIG_PMW3610_ACCELERATION_SENSITIVITY * 2);
 
-            *accel_x = (x > 0) ? (x * x / divider + x) : (-x * x / divider + x);
-            *accel_y = (y > 0) ? (y * y / divider + y) : (-y * y / divider + y);
+    *accel_x = (x > 0) ? (x * x / divider + x) : (-x * x / divider + x);
+    *accel_y = (y > 0) ? (y * y / divider + y) : (-y * y / divider + y);
 
-            // Preserve individual axis precision for small movements
-            if (abs(x) <= 1) *accel_x = x;
-            if (abs(y) <= 1) *accel_y = y;
+    // Preserve individual axis precision for small movements
+    if (abs(x) <= 1)
+        *accel_x = x;
+    if (abs(y) <= 1)
+        *accel_y = y;
 
-        #elif CONFIG_PMW3610_ACCELERATION_ALGORITHM_SIGMOID
-            // Speed-based sigmoid acceleration
-            int32_t movement = abs(x) + abs(y);
-            int64_t current_time = k_uptime_get();
-            int64_t delta_time = data->last_mouse_time > 0 ?
-                                current_time - data->last_mouse_time : 0;
+#elif CONFIG_PMW3610_ACCELERATION_ALGORITHM_SIGMOID
+    // Speed-based sigmoid acceleration with gentler low-speed curve
+    int32_t movement = abs(x) + abs(y);
+    int64_t current_time = k_uptime_get();
+    int64_t delta_time = data->last_mouse_time > 0 ? current_time - data->last_mouse_time : 0;
 
-            if (delta_time > 0 && delta_time < 100) {
-                float speed = (float)movement / delta_time;
-                float base_sensitivity = (float)CONFIG_PMW3610_ACCELERATION_SENSITIVITY;
-                float acceleration = 1.0f + (base_sensitivity - 1.0f) *
-                                    (1.0f / (1.0f + expf(-0.2f * (speed - 10.0f))));
+    // Always apply some acceleration to avoid frame skipping
+    float acceleration = 1.0f;
+    
+    if (delta_time > 0 && delta_time < 100) {
+        float speed = (float)movement / delta_time;
+        float base_sensitivity = (float)CONFIG_PMW3610_ACCELERATION_SENSITIVITY;
+        acceleration =
+            1.0f + (base_sensitivity - 1.0f) * (1.0f / (1.0f + expf(-0.25f * (speed - 10.0f))));
+    }
+    
+    data->last_mouse_time = current_time;
 
-                *accel_x = (int32_t)(x * acceleration);
-                *accel_y = (int32_t)(y * acceleration);
+    *accel_x = (int32_t)(x * acceleration);
+    *accel_y = (int32_t)(y * acceleration);
 
-                // Preserve individual axis precision for small movements
-                if (abs(x) <= 1) *accel_x = x;
-                if (abs(y) <= 1) *accel_y = y;
-
-                data->last_mouse_time = current_time;
-            } else {
-                // Outside timing window - reset to start fresh acceleration chain
-                data->last_mouse_time = current_time;
-            }
-        #endif
-    #endif
+    // Preserve individual axis precision for small movements
+    if (abs(x) <= 1)
+        *accel_x = x;
+    if (abs(y) <= 1)
+        *accel_y = y;
+#endif
+#endif
 }
 
 static inline void process_scroll_events(const struct device *dev, struct pixart_data *data,
-                                        int32_t delta, bool is_horizontal) {
+                                         int32_t delta, bool is_horizontal) {
     if (abs(delta) > CONFIG_PMW3610_SCROLL_TICK) {
         int event_count = abs(delta) / CONFIG_PMW3610_SCROLL_TICK;
         const int MAX_EVENTS = 20;
         int32_t *target_delta = is_horizontal ? &data->scroll_delta_x : &data->scroll_delta_y;
-        
+
         if (event_count > MAX_EVENTS) {
             event_count = MAX_EVENTS;
-            *target_delta = (delta > 0) ? 
-                delta - (MAX_EVENTS * CONFIG_PMW3610_SCROLL_TICK) :
-                delta + (MAX_EVENTS * CONFIG_PMW3610_SCROLL_TICK);
+            *target_delta = (delta > 0) ? delta - (MAX_EVENTS * CONFIG_PMW3610_SCROLL_TICK)
+                                        : delta + (MAX_EVENTS * CONFIG_PMW3610_SCROLL_TICK);
             data->last_remainder_time = k_uptime_get();
         } else {
             *target_delta = delta % CONFIG_PMW3610_SCROLL_TICK;
         }
-        
+
         for (int i = 0; i < event_count; i++) {
-            input_report_rel(dev,
-                            is_horizontal ? INPUT_REL_HWHEEL : INPUT_REL_WHEEL,
-                            delta > 0 ? 
-                                (is_horizontal ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_Y_NEGATIVE) :
-                                (is_horizontal ? PMW3610_SCROLL_X_POSITIVE : PMW3610_SCROLL_Y_POSITIVE),
-                            (i == event_count - 1),
-                            K_MSEC(10));
+            input_report_rel(
+                dev, is_horizontal ? INPUT_REL_HWHEEL : INPUT_REL_WHEEL,
+                delta > 0 ? (is_horizontal ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_Y_NEGATIVE)
+                          : (is_horizontal ? PMW3610_SCROLL_X_POSITIVE : PMW3610_SCROLL_Y_POSITIVE),
+                (i == event_count - 1), K_MSEC(10));
         }
-        
+
         if (is_horizontal) {
             data->scroll_delta_y = 0;
         } else {
@@ -714,7 +715,6 @@ static inline void process_scroll_events(const struct device *dev, struct pixart
         }
     }
 }
-
 
 static int pmw3610_report_data(const struct device *dev) {
     struct pixart_data *data = dev->data;
@@ -765,8 +765,7 @@ static int pmw3610_report_data(const struct device *dev) {
 #if AUTOMOUSE_LAYER > 0
     if (input_mode == MOVE &&
         (automouse_triggered || zmk_keymap_highest_layer_active() != AUTOMOUSE_LAYER) &&
-        (abs(x) + abs(y) > CONFIG_PMW3610_MOVEMENT_THRESHOLD)
-    ) {
+        (abs(x) + abs(y) > CONFIG_PMW3610_MOVEMENT_THRESHOLD)) {
         activate_automouse_layer();
     }
 #endif
@@ -810,7 +809,7 @@ static int pmw3610_report_data(const struct device *dev) {
             data->scroll_delta_x = 0;
             data->scroll_delta_y = 0;
             data->last_remainder_time = 0;
-        } 
+        }
     }
 
 #ifdef CONFIG_PMW3610_SMART_ALGORITHM
@@ -864,10 +863,10 @@ static int pmw3610_report_data(const struct device *dev) {
         } else if (input_mode == SCROLL) {
             int32_t accel_x, accel_y;
             calculate_scroll_acceleration(x, y, data, &accel_x, &accel_y);
-            
+
             data->scroll_delta_x += accel_x;
             data->scroll_delta_y += accel_y;
-            
+
             process_scroll_events(dev, data, data->scroll_delta_y, false);
             process_scroll_events(dev, data, data->scroll_delta_x, true);
         } else if (input_mode == BALL_ACTION) {
@@ -876,10 +875,11 @@ static int pmw3610_report_data(const struct device *dev) {
 
             const struct pixart_config *config = dev->config;
 
-            if(ball_action_idx != -1) {
+            if (ball_action_idx != -1) {
                 const struct ball_action_cfg action_cfg = *config->ball_actions[ball_action_idx];
 
-                LOG_DBG("invoking ball action [%d], layer=%d", ball_action_idx, zmk_keymap_highest_layer_active());
+                LOG_DBG("invoking ball action [%d], layer=%d", ball_action_idx,
+                        zmk_keymap_highest_layer_active());
 
                 struct zmk_behavior_binding_event event = {
                     .position = INT32_MAX,
@@ -892,15 +892,17 @@ static int pmw3610_report_data(const struct device *dev) {
 
                 // determine which binding to invoke
                 int idx = -1;
-                if(abs(data->ball_action_delta_x) > action_cfg.tick) {
+                if (abs(data->ball_action_delta_x) > action_cfg.tick) {
                     idx = data->ball_action_delta_x > 0 ? 0 : 1;
-                } else if(abs(data->ball_action_delta_y) > action_cfg.tick) {
+                } else if (abs(data->ball_action_delta_y) > action_cfg.tick) {
                     idx = data->ball_action_delta_y > 0 ? 3 : 2;
                 }
 
-                if(idx != -1) {
-                    zmk_behavior_queue_add(&event, action_cfg.bindings[idx], true, action_cfg.tap_ms);
-                    zmk_behavior_queue_add(&event, action_cfg.bindings[idx], false, action_cfg.wait_ms);
+                if (idx != -1) {
+                    zmk_behavior_queue_add(&event, action_cfg.bindings[idx], true,
+                                           action_cfg.tap_ms);
+                    zmk_behavior_queue_add(&event, action_cfg.bindings[idx], false,
+                                           action_cfg.wait_ms);
 
                     data->ball_action_delta_x = 0;
                     data->ball_action_delta_y = 0;
@@ -1053,9 +1055,8 @@ static int pmw3610_pm_action(const struct device *dev, enum pm_device_action act
 }
 #endif /* CONFIG_PMW3610_PM */
 
-
 #define TRANSFORMED_BINDINGS(n)                                                                    \
-    { LISTIFY(DT_PROP_LEN(n, bindings), ZMK_KEYMAP_EXTRACT_BINDING, (, ), n) }
+    {LISTIFY(DT_PROP_LEN(n, bindings), ZMK_KEYMAP_EXTRACT_BINDING, (, ), n)}
 
 #define BALL_ACTIONS_INST(n)                                                                       \
     static struct zmk_behavior_binding                                                             \
@@ -1070,7 +1071,6 @@ static int pmw3610_pm_action(const struct device *dev, enum pm_device_action act
         .wait_ms = DT_PROP_OR(n, wait_ms, 0),                                                      \
         .tap_ms = DT_PROP_OR(n, tap_ms, 0),                                                        \
     };
-
 
 DT_INST_FOREACH_CHILD(0, BALL_ACTIONS_INST)
 
@@ -1106,7 +1106,7 @@ DT_INST_FOREACH_CHILD(0, BALL_ACTIONS_INST)
         .ball_actions_len = BALL_ACTIONS_LEN,                                                      \
     };                                                                                             \
                                                                                                    \
-    IF_ENABLED(CONFIG_PMW3610_PM, (PM_DEVICE_DT_INST_DEFINE(n, pmw3610_pm_action);))              \
+    IF_ENABLED(CONFIG_PMW3610_PM, (PM_DEVICE_DT_INST_DEFINE(n, pmw3610_pm_action);))               \
                                                                                                    \
     DEVICE_DT_INST_DEFINE(n, pmw3610_init,                                                         \
                           COND_CODE_1(CONFIG_PMW3610_PM, (PM_DEVICE_DT_INST_GET(n)), (NULL)),      \

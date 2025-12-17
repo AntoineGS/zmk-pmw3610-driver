@@ -204,9 +204,9 @@ config PMW3610_ACCELERATION
       Enable acceleration based on movement speed.
 
 config PMW3610_ACCELERATION_SENSITIVITY
-    int "Acceleration sensitivity (1-10)"
+    int "Acceleration sensitivity (1-100)"
     default 3
-    range 1 10
+    range 1 100
     depends on PMW3610_ACCELERATION
     help
       Acceleration sensitivity. Higher values make mouse movement more responsive with stronger acceleration.
