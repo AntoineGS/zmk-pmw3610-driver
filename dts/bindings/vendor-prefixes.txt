@@ -1,1 +1,1 @@
-pixart	PixArt Imaging Inc.
+zmk	ZMK Firmware
