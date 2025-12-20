@@ -38,7 +38,7 @@ struct pixart_data {
     int64_t last_scroll_time;
 #endif
 
-#ifdef CONFIG_PMW3610_ACCELERATION_ALGORITHM_SIGMOID
+#if CONFIG_PMW3610_ACCELERATION_ALGORITHM == 2
     int64_t last_mouse_time;
 #endif
 

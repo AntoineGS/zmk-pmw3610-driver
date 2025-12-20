@@ -632,13 +632,13 @@ static inline void calculate_mouse_acceleration(int16_t x, int16_t y, struct pix
     *accel_x = x;
     *accel_y = y;
 
-#ifdef CONFIG_PMW3610_ACCELERATION
+#if CONFIG_PMW3610_ACCELERATION_ALGORITHM > 0
     // Don't accelerate very small movements (preserve precision)
     if (abs(x) <= 1 && abs(y) <= 1) {
         return;
     }
 
-#ifdef CONFIG_PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
+#if CONFIG_PMW3610_ACCELERATION_ALGORITHM == 1
     // QMK-style quadratic acceleration: output = x * (1 + |x|/divider)
     // Sensitivity maps to divider: higher sensitivity = lower divider = more acceleration
     // divider = 22 - (sensitivity * 2)
@@ -654,7 +654,7 @@ static inline void calculate_mouse_acceleration(int16_t x, int16_t y, struct pix
     if (abs(y) <= 1)
         *accel_y = y;
 
-#elif CONFIG_PMW3610_ACCELERATION_ALGORITHM_SIGMOID
+#elif CONFIG_PMW3610_ACCELERATION_ALGORITHM == 2
     // Speed-based sigmoid acceleration with gentler low-speed curve
     int32_t movement = abs(x) + abs(y);
     int64_t current_time = k_uptime_get();
@@ -662,14 +662,14 @@ static inline void calculate_mouse_acceleration(int16_t x, int16_t y, struct pix
 
     // Always apply some acceleration to avoid frame skipping
     float acceleration = 1.0f;
-    
+
     if (delta_time > 0 && delta_time < 100) {
         float speed = (float)movement / delta_time;
         float base_sensitivity = (float)CONFIG_PMW3610_ACCELERATION_SENSITIVITY;
         acceleration =
             1.0f + (base_sensitivity - 1.0f) * (1.0f / (1.0f + expf(-0.25f * (speed - 10.0f))));
     }
-    
+
     data->last_mouse_time = current_time;
 
     *accel_x = (int32_t)(x * acceleration);

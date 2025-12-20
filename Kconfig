@@ -197,42 +197,25 @@ config PMW3610_SCROLL_ACCELERATION_SENSITIVITY
     help
       Scrolling acceleration sensitivity. Higher values make scrolling more responsive with stronger acceleration.
 
-config PMW3610_ACCELERATION
-    bool "Enable acceleration"
-    default n
+config PMW3610_ACCELERATION_ALGORITHM
+    int "Acceleration algorithm (0=none, 1=quadratic, 2=sigmoid)"
+    default 0
+    range 0 2
     help
-      Enable acceleration based on movement speed.
+      Select the mouse acceleration algorithm:
+      0 = Disabled (no acceleration)
+      1 = Quadratic (QMK-style) - distance-based, formula: output = x * (1 + |x|/divider)
+          Simple and predictable - larger movements get proportionally more acceleration.
+      2 = Sigmoid (speed-based) - uses movement speed over time with S-curve.
+          Smoother transition between slow and fast movements.
 
 config PMW3610_ACCELERATION_SENSITIVITY
     int "Acceleration sensitivity (1-100)"
     default 3
     range 1 100
-    depends on PMW3610_ACCELERATION
+    depends on PMW3610_ACCELERATION_ALGORITHM > 0
     help
       Acceleration sensitivity. Higher values make mouse movement more responsive with stronger acceleration.
-
-choice
-    prompt "Select acceleration algorithm"
-    default PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
-    depends on PMW3610_ACCELERATION
-
-config PMW3610_ACCELERATION_ALGORITHM_QUADRATIC
-    bool "Quadratic (QMK-style)"
-    help
-      Distance-based quadratic acceleration. Formula: output = x * (1 + |x|/divider)
-      Simple and predictable - larger movements get proportionally more acceleration.
-      Matches QMK pointing device acceleration behavior.
-      Sensitivity maps to divider: higher sensitivity = more acceleration.
-
-config PMW3610_ACCELERATION_ALGORITHM_SIGMOID
-    bool "Sigmoid (speed-based)"
-    help
-      Speed-based sigmoid acceleration using movement speed over time.
-      Provides smooth S-curve acceleration with 100ms timing window.
-      More complex but smoother transition between slow and fast movements.
-      Sensitivity controls the steepness of the acceleration curve.
-
-endchoice
 
 module = PMW3610
 module-str = PMW3610
