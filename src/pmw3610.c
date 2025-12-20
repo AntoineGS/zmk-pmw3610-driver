@@ -1014,37 +1014,90 @@ static int pmw3610_init(const struct device *dev) {
 
 #ifdef CONFIG_PMW3610_PM
 static int pmw3610_pm_action(const struct device *dev, enum pm_device_action action) {
+    const struct pixart_config *config = dev->config;
+    struct pixart_data *data = dev->data;
     int err = 0;
 
     switch (action) {
     case PM_DEVICE_ACTION_SUSPEND:
-        LOG_INF("Entering deep sleep");
-        // Disable interrupts before shutdown
-        set_interrupt(dev, false);
-        // Write shutdown enable command to shutdown register
-        err = reg_write(dev, PMW3610_REG_SHUTDOWN, PMW3610_SHUTDOWN_ENABLE);
+    case PM_DEVICE_ACTION_TURN_OFF:
+        LOG_INF("PMW3610 turning OFF - releasing all pins to prevent back-feed");
+
+        // Cancel all pending work
+        k_work_cancel_delayable(&data->init_work);
+        k_work_cancel(&data->trigger_work);
+
+        // Disable GPIO interrupt completely
+        gpio_pin_interrupt_configure_dt(&config->irq_gpio, GPIO_INT_DISABLE);
+        gpio_remove_callback(config->irq_gpio.port, &data->irq_gpio_cb);
+
+        // Release IRQ pin to high-Z (input, no pull-up) to prevent back-feeding power
+        err = gpio_pin_configure_dt(&config->irq_gpio, GPIO_INPUT);
         if (err) {
-            LOG_ERR("Failed to enter shutdown mode: %d", err);
+            LOG_WRN("Failed to release IRQ pin: %d", err);
         }
+
+        // Release CS pin to high-Z (input) to prevent back-feeding power
+        err = gpio_pin_configure_dt(&config->cs_gpio, GPIO_INPUT);
+        if (err) {
+            LOG_WRN("Failed to release CS pin: %d", err);
+        }
+
+        // Release SPI data pins to high-Z to prevent back-feeding power through ESD diodes
+        // These pins are defined in the overlay: SCK=P1.13, MOSI/MISO=P0.10
+        {
+            const struct device *gpio0 = DEVICE_DT_GET(DT_NODELABEL(gpio0));
+            const struct device *gpio1 = DEVICE_DT_GET(DT_NODELABEL(gpio1));
+
+            if (device_is_ready(gpio0)) {
+                // MOSI/MISO on P0.10
+                gpio_pin_configure(gpio0, 10, GPIO_DISCONNECTED);
+                LOG_INF("Released P0.10 (MOSI/MISO) to disconnected");
+            }
+            if (device_is_ready(gpio1)) {
+                // SCK on P1.13
+                gpio_pin_configure(gpio1, 13, GPIO_DISCONNECTED);
+                LOG_INF("Released P1.13 (SCK) to disconnected");
+            }
+        }
+
+        // Mark as not ready
+        data->ready = false;
+
+        LOG_INF("PMW3610 fully disabled - all pins released to high-Z");
         break;
 
     case PM_DEVICE_ACTION_RESUME:
-        LOG_INF("Waking from deep sleep");
-        // Write wakeup command to power-up reset register
-        err = reg_write(dev, PMW3610_REG_POWER_UP_RESET, PMW3610_POWERUP_CMD_WAKEUP);
+    case PM_DEVICE_ACTION_TURN_ON:
+        LOG_INF("PMW3610 turning ON - reconfiguring pins and reinitializing");
+
+        // Reconfigure CS pin as output (inactive/high for active-low CS)
+        err = gpio_pin_configure_dt(&config->cs_gpio, GPIO_OUTPUT_INACTIVE);
         if (err) {
-            LOG_ERR("Failed to wake up from shutdown: %d", err);
+            LOG_ERR("Cannot reconfigure CS GPIO: %d", err);
             return err;
         }
 
-        // Wait for sensor to wake up (similar to power-up timing)
-        k_msleep(10);
+        // Reconfigure IRQ pin as input with original flags
+        err = gpio_pin_configure_dt(&config->irq_gpio, GPIO_INPUT);
+        if (err) {
+            LOG_ERR("Cannot reconfigure IRQ GPIO: %d", err);
+            return err;
+        }
 
-        struct pixart_data *data = dev->data;
-        // Re-run initialization sequence
-        data->async_init_step = ASYNC_INIT_STEP_CLEAR_OB1;
+        // Re-add GPIO callback
+        err = gpio_add_callback(config->irq_gpio.port, &data->irq_gpio_cb);
+        if (err) {
+            LOG_ERR("Cannot re-add IRQ GPIO callback: %d", err);
+            return err;
+        }
+
+        // Full reinitialization from power up
+        data->async_init_step = ASYNC_INIT_STEP_POWER_UP;
         data->ready = false;
         k_work_schedule(&data->init_work, K_MSEC(async_init_delay[data->async_init_step]));
+
+        LOG_INF("PMW3610 reinitialization started");
         break;
 
     default:
